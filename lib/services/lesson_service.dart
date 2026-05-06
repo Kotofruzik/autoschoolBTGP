@@ -1,0 +1,382 @@
+import 'dart:io';
+import 'dart:convert';
+import 'package:minio/io.dart';
+import 'package:parse_server_sdk_flutter/parse_server_sdk_flutter.dart';
+import 'package:minio/minio.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+
+class LessonService {
+  static const String _serverUrl = 'https://parseapi.back4app.com';
+  static const String _appId = 'qCxbZic6eqme0pvScG5jLoCxDUxztB9FGuiXhEiy';
+  static const String _clientKey = '50yEotCNReUkwSd7nhVmhYnoZspmLcbizp1GJC3v';
+
+  Future<String?> uploadCarPhoto(XFile image) async {
+    try {
+      final file = File(image.path);
+      const accessKey = 'YCAJEyTjVJ5hPHjDHwCdRFvqu';
+      const secretKey = 'YCPsjstQHgXYSe0ZwRRl-fKFUCSnKMAj5WtyGJ4W';
+      const bucket = 'autoschoolbtgp';
+      const region = 'ru-central1';
+      const endpoint = 'storage.yandexcloud.net';
+
+      final minio = Minio(
+        endPoint: endpoint,
+        port: 443,
+        useSSL: true,
+        accessKey: accessKey,
+        secretKey: secretKey,
+        region: region,
+      );
+
+      final key = 'lessons/${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await minio.fPutObject(
+        bucket,
+        key,
+        file.path,
+        metadata: {'Content-Type': 'image/jpeg'},
+      );
+
+      final photoUrl = 'https://$endpoint/$bucket/$key';
+      return photoUrl;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<void> sendLessonNotification({
+    required String studentId,
+    required String lessonType,
+    required DateTime startTime,
+    required String lessonId,
+  }) async {
+    try {
+      final url = Uri.parse('$_serverUrl/functions/sendLessonNotification');
+
+      final payload = jsonEncode({
+        'studentId': studentId,
+        'lessonType': lessonType,
+        'startTime': startTime.toIso8601String(),
+        'lessonId': lessonId,
+      });
+
+      final user = await ParseUser.currentUser() as ParseUser?;
+      final sessionToken = user?.sessionToken;
+
+      if (sessionToken == null) {
+        return;
+      }
+
+      final response = await http.post(
+        url,
+        headers: {
+          'X-Parse-Application-Id': _appId,
+          'X-Parse-Client-Key': _clientKey,
+          'X-Parse-Session-Token': sessionToken,
+          'Content-Type': 'application/json',
+        },
+        body: payload,
+      );
+    } catch (e) {
+      print('Ошибка: $e');
+    }
+  }
+
+  Future<void> sendLessonCancellationNotification({
+    required String studentId,
+    required String lessonType,
+    required DateTime startTime,
+    required String lessonId,
+  }) async {
+    try {
+      final url = Uri.parse('$_serverUrl/functions/sendLessonCancellationNotification');
+      final payload = jsonEncode({
+        'studentId': studentId,
+        'lessonType': lessonType,
+        'startTime': startTime.toIso8601String(),
+        'lessonId': lessonId,
+      });
+
+      final user = await ParseUser.currentUser() as ParseUser?;
+      final sessionToken = user?.sessionToken;
+
+      if (sessionToken == null) {
+        return;
+      }
+
+      final response = await http.post(
+        url,
+        headers: {
+          'X-Parse-Application-Id': _appId,
+          'X-Parse-Client-Key': _clientKey,
+          'X-Parse-Session-Token': sessionToken,
+          'Content-Type': 'application/json',
+        },
+        body: payload,
+      );
+    } catch (e) {
+      print('Ошибка: $e');
+    }
+  }
+
+  Future<ParseObject?> createLesson({
+    required String type,
+    required DateTime startTime,
+    required DateTime endTime,
+    String? carBrand,
+    String? carModel,
+    String? carNumber,
+    String? carPhotoUrl,
+    String? comment,
+    required ParseUser student,
+    required ParseUser instructor,
+  }) async {
+    if (student.objectId == null || instructor.objectId == null) {
+      final currentStudent = student.objectId == null ? await ParseUser.currentUser() as ParseUser? : student;
+      final currentInstructor = instructor.objectId == null ? await ParseUser.currentUser() as ParseUser? : instructor;
+      
+      if (currentStudent?.objectId == null || currentInstructor?.objectId == null) {
+        throw Exception('Не удалось получить objectId студента или инструктора');
+      }
+      student = currentStudent!;
+      instructor = currentInstructor!;
+    }
+
+    final lesson = ParseObject('Lesson')
+      ..set('type', type)
+      ..set('startTime', startTime)
+      ..set('endTime', endTime)
+      ..set('duration', endTime.difference(startTime).inMinutes)
+      ..set('carBrand', carBrand)
+      ..set('carModel', carModel)
+      ..set('carNumber', carNumber)
+      ..set('carPhoto', carPhotoUrl)
+      ..set('comment', comment)
+      ..set('student', {'__type': 'Pointer', 'className': '_User', 'objectId': student.objectId})
+      ..set('instructor', {'__type': 'Pointer', 'className': '_User', 'objectId': instructor.objectId})
+      ..set('status', 'scheduled')
+      ..setACL(_createLessonACL(instructor, student));
+
+    final response = await lesson.save();
+
+    if (response.success) {
+      final createdLesson = response.result as ParseObject;
+
+      if (student.objectId != null && createdLesson.objectId != null) {
+        await sendLessonNotification(
+          studentId: student.objectId!,
+          lessonType: type,
+          startTime: startTime,
+          lessonId: createdLesson.objectId!,
+        );
+      } else {
+        print('Не удалось отправить пуш: отсутствует objectId');
+      }
+
+      return createdLesson;
+    } else {
+      throw Exception(response.error!.message);
+    }
+  }
+
+  ParseACL _createLessonACL(ParseUser instructor, ParseUser student) {
+    final acl = ParseACL();
+    acl.setPublicReadAccess(allowed: false);
+    acl.setPublicWriteAccess(allowed: false);
+    if (instructor.objectId != null) {
+      acl.setReadAccess(userId: instructor.objectId!, allowed: true);
+      acl.setWriteAccess(userId: instructor.objectId!, allowed: true);
+    }
+    if (student.objectId != null) {
+      acl.setReadAccess(userId: student.objectId!, allowed: true);
+    }
+    return acl;
+  }
+
+  Future<List<ParseObject>> getLessonsForStudent(ParseUser student) async {
+    if (student.objectId == null) {
+      final currentUser = await ParseUser.currentUser() as ParseUser?;
+      if (currentUser == null || currentUser.objectId == null) {
+        return [];
+      }
+      return await _getLessonsForStudentById(currentUser.objectId!);
+    }
+    return await _getLessonsForStudentById(student.objectId!);
+  }
+
+  Future<List<ParseObject>> _getLessonsForStudentById(String studentId) async {
+    final query = QueryBuilder<ParseObject>(ParseObject('Lesson'))
+      ..whereEqualTo('student', {'__type': 'Pointer', 'className': '_User', 'objectId': studentId})
+      ..whereNotEqualTo('status', 'cancelled')
+      ..orderByAscending('startTime');
+
+    final response = await query.query();
+    if (response.success && response.results != null) {
+      return response.results!.cast<ParseObject>();
+    } else {
+      return [];
+    }
+  }
+
+  Future<List<ParseObject>> getLessonsForInstructor(ParseUser instructor) async {
+    if (instructor.objectId == null) {
+      final currentUser = await ParseUser.currentUser() as ParseUser?;
+      if (currentUser == null || currentUser.objectId == null) {
+        return [];
+      }
+      return await _getLessonsForInstructorById(currentUser.objectId!);
+    }
+    return await _getLessonsForInstructorById(instructor.objectId!);
+  }
+
+  Future<List<ParseObject>> _getLessonsForInstructorById(String instructorId) async {
+    final query = QueryBuilder<ParseObject>(ParseObject('Lesson'))
+      ..whereEqualTo('instructor', {'__type': 'Pointer', 'className': '_User', 'objectId': instructorId})
+      ..whereNotEqualTo('status', 'cancelled')
+      ..orderByAscending('startTime');
+
+    final response = await query.query();
+    if (response.success && response.results != null) {
+      return response.results!.cast<ParseObject>();
+    } else {
+      return [];
+    }
+  }
+
+  Future<List<ParseUser>> getStudentsForInstructor(ParseUser instructor) async {
+    try {
+      final function = ParseCloudFunction('getMyStudents');
+      final response = await function.execute(parameters: {});
+
+      if (response.success && response.result != null) {
+        final List<dynamic> studentsData = response.result;
+
+        return studentsData.map((data) {
+          final student = ParseUser.forQuery()
+            ..objectId = data['id']
+            ..set('surname', data['surname'] ?? '')
+            ..set('firstname', data['firstname'] ?? '')
+            ..set('patronymic', data['patronymic'] ?? '')
+            ..set('phone', data['phone'] ?? '')
+            ..set('email', data['email'] ?? '')
+            ..set('photo', data['photo'] ?? '');
+          return student;
+        }).toList();
+      }
+      
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  Future<void> cancelLesson(ParseObject lesson) async {
+    lesson.set('status', 'cancelled');
+    final response = await lesson.save();
+
+    if (!response.success) {
+      throw Exception(response.error?.message ?? 'Не удалось отменить занятие');
+    }
+
+    try {
+      final studentData = lesson.get<Map<String, dynamic>>('student');
+      final studentId = studentData?['objectId'] as String?;
+
+      final lessonType = lesson.get<String>('type') ?? 'lesson';
+      final startTime = lesson.get<DateTime>('startTime');
+      final lessonId = lesson.objectId;
+
+      if (studentId != null && startTime != null && lessonId != null) {
+        await sendLessonCancellationNotification(
+          studentId: studentId,
+          lessonType: lessonType,
+          startTime: startTime,
+          lessonId: lessonId,
+        );
+      } else {
+        print('Ошибка');
+      }
+    } catch (e) {
+      print('Ошибка: $e');
+    }
+  }
+
+  Future<void> notifyInstructorAboutDetach({
+    required String instructorId,
+    required String studentName,
+}) async {
+    try {
+      final url = Uri.parse('https://parseapi.back4app.com/functions/sendInstructorDetachNotification');
+
+      final payload = jsonEncode({
+        'instructorId' : instructorId,
+        'studentName' : studentName,
+      });
+
+      final user = await ParseUser.currentUser() as ParseUser?;
+      final sessionToken = user?.sessionToken;
+
+      if (sessionToken == null) {
+        return;
+      }
+
+      final response = await http.post(
+        url,
+        headers: {
+          'X-Parse-Application-Id': 'qCxbZic6eqme0pvScG5jLoCxDUxztB9FGuiXhEiy',
+          'X-Parse-Client-Key': '50yEotCNReUkwSd7nhVmhYnoZspmLcbizp1GJC3v',
+          'X-Parse-Session-Token': sessionToken,
+          'Content-Type': 'application/json',
+        },
+        body: payload,
+      );
+    } catch (e) {
+      print('[PUSH] Исключение при отправке уведомления инструктору: $e');
+    }
+  }
+
+  Future<void> requestReschedule(ParseObject lesson, DateTime newStartTime, DateTime newEndTime, {String? reason}) async {
+    lesson.set('rescheduleRequest', {
+      'newStartTime': newStartTime.toIso8601String(),
+      'newEndTime': newEndTime.toIso8601String(),
+      'reason': reason,
+    });
+    lesson.set('status', 'reschedule_requested');
+    final response = await lesson.save();
+    if (!response.success) {
+      throw Exception(response.error?.message ?? 'Не удалось запросить перенос');
+    }
+  }
+
+  Future<void> approveReschedule(ParseObject lesson) async {
+    final request = lesson.get<Map<String, dynamic>>('rescheduleRequest');
+    if (request != null) {
+      lesson.set('startTime', DateTime.parse(request['newStartTime']));
+      lesson.set('endTime', DateTime.parse(request['newEndTime']));
+      lesson.set('duration', DateTime.parse(request['newEndTime']).difference(DateTime.parse(request['newStartTime'])).inMinutes);
+      lesson.set('rescheduleRequest', null);
+      lesson.set('status', 'scheduled');
+
+      final response = await lesson.save();
+      if (!response.success) {
+        throw Exception(response.error?.message ?? 'Не удалось подтвердить перенос');
+      }
+    }
+  }
+
+  Future<void> rejectReschedule(ParseObject lesson) async {
+    lesson.set('rescheduleRequest', null);
+    lesson.set('status', 'scheduled');
+    final response = await lesson.save();
+    if (!response.success) {
+      throw Exception(response.error?.message ?? 'Не удалось отклонить перенос');
+    }
+  }
+
+  Future<void> deleteLesson(ParseObject lesson) async {
+    final response = await lesson.delete();
+    if (!response.success) {
+      throw Exception(response.error?.message ?? 'Не удалось удалить занятие');
+    }
+  }
+}

@@ -1,0 +1,63 @@
+```
+# Dependencies
+.pub/
+.buildlog
+.flutter-plugins
+.flutter-plugin-dependencies
+.packages
+
+# Generated plugin build files
+**/android/build/**
+**/ios/Flutter/.last_build_id
+**/linux/flutter/ephemeral/**
+**/macos/Flutter/ephemeral/**
+**/windows/flutter/ephemeral/**
+
+# Android
+**/android/**/generated_plugin_registrant.java
+**/android/**/GeneratedPluginRegistrant.kt
+**/android/**/generated_main.m
+**/android/**/GeneratedPluginRegistrant.cs
+
+# iOS
+**/ios/**/GeneratedPluginRegistrant.swift
+**/ios/**/Runner/GeneratedPluginRegistrant.h
+**/ios/**/Runner/GeneratedPluginRegistrant.m
+
+# Web
+**/web/**/generated_plugin_registrant.dart
+
+# Linux
+**/linux/**/generated_plugin_registrant.cc
+**/linux/**/generated_plugin_registrant.h
+
+# macOS
+**/macos/**/generated_plugin_registrant.swift
+**/macos/**/Runner/generated_plugin_registrant.swift
+
+# Windows
+**/windows/**/generated_plugin_registrant.cpp
+**/windows/**/generated_plugin_registrant.h
+
+# Build outputs
+**/build/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
