@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:parse_server_sdk_flutter/parse_server_sdk_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:autoschool_btgp/services/users_provider.dart';
 import 'package:cross_file/cross_file.dart';
@@ -61,6 +62,10 @@ class _AddUserPageState extends State<AddUserPage> {
     setState(() => _isLoading = true);
     final provider = Provider.of<UsersProvider>(context, listen: false);
 
+    final admin = await ParseUser.currentUser() as ParseUser?;
+    final adminSessionToken = admin?.sessionToken;
+    final adminObjectId = admin?.objectId;
+
     try {
       final newUser = await provider.createUserAndReturn(
         email: _emailController.text.trim(),
@@ -71,6 +76,17 @@ class _AddUserPageState extends State<AddUserPage> {
         phone: _phoneController.text.trim(),
         role: _selectedRole,
       );
+
+      if (adminSessionToken != null && adminObjectId != null) {
+        ParseCoreData().setSessionId(adminSessionToken);
+        final query = QueryBuilder<ParseUser>(ParseUser.forQuery())
+          ..whereEqualTo('objectId', adminObjectId);
+        final result = await query.query();
+        if (result.success && result.results != null && result.results!.isNotEmpty) {
+          final restoredAdmin = result.results!.first as ParseUser;
+          await restoredAdmin.update();
+        }
+      }
 
       if (newUser != null) {
         if (_newCroppedImage != null) {
@@ -92,6 +108,16 @@ class _AddUserPageState extends State<AddUserPage> {
         );
       }
     } catch (e) {
+      if (adminSessionToken != null && adminObjectId != null) {
+        ParseCoreData().setSessionId(adminSessionToken);
+        final query = QueryBuilder<ParseUser>(ParseUser.forQuery())
+          ..whereEqualTo('objectId', adminObjectId);
+        final result = await query.query();
+        if (result.success && result.results != null && result.results!.isNotEmpty) {
+          final restoredAdmin = result.results!.first as ParseUser;
+          await restoredAdmin.update();
+        }
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
       );

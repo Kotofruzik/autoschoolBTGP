@@ -103,7 +103,7 @@ class _PhonePageState extends State<PhonePage> {
                       style: const TextStyle(color: Colors.white, fontSize: 18),
                       decoration: InputDecoration(
                         labelText: 'Номер телефона',
-                        hintText: '79203961833',
+                        hintText: '71234567890',
                         prefixIcon: const Icon(Icons.phone, color: Colors.white70),
                         labelStyle: const TextStyle(color: Colors.white70),
                         hintStyle: const TextStyle(color: Colors.white54),
